@@ -15,6 +15,11 @@ RUN npm run build
 # 运行期不再需要开发依赖与测试代码，清理掉
 RUN npm prune --omit=dev && npm cache clean --force
 
+# 时变负荷能力的数据目录：曲线/版本/核算结果以 JSON 落在这里。
+# 预先建好并交给非 root 的 node 用户，支持挂载命名卷持久化。
+RUN mkdir -p /data && chown -R node:node /data
+ENV TIMVAR_DATA_DIR=/data
+
 ENV NODE_ENV=production
 ENV PORT=8080
 EXPOSE 8080

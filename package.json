@@ -11,7 +11,8 @@
     "typecheck": "tsc -p tsconfig.test.json",
     "start": "node dist/server.js",
     "dev": "tsx watch src/server.ts",
-    "test": "node --import tsx --test test/analytic.test.ts test/simulation.test.ts test/api.test.ts"
+    "pretest": "tsc -p tsconfig.json",
+    "test": "node --import tsx --test test/analytic.test.ts test/simulation.test.ts test/api.test.ts test/timvar-transient.test.ts test/timvar-simulation.test.ts test/timvar-service.test.ts test/timvar-validation.test.ts test/timvar-api.test.ts test/timvar-restart.test.ts"
   },
   "dependencies": {
     "express": "^4.22.3"

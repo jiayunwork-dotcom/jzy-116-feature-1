@@ -36,8 +36,31 @@ export class TimeWeightedAccumulator {
     this.started = true;
   }
 
-  /** 补上 [最后事件时刻, horizon] 这段无事件区间并返回汇总指标 */
-  settle(horizon: number): {
+  /**
+   * 显式登记统计时域的起点与初始人数。
+   *
+   * 老的单段仿真从空系统在 t=0 起跑，第一次 observe 之前状态恒为 0，
+   * 那段面积记不记都是 0；时变分段仿真的段入口可能已经积压了顾客
+   * （上一段跨界延续），必须在段开始时刻就把人数登记上，否则
+   * [段起点, 段内首个事件) 这段时间加权面积会丢失。
+   * 只允许在尚未开始观测时调用一次。
+   */
+  start(startTime: number, initialSystem: number): void {
+    if (this.started) throw new Error('累加器已经开始观测，不能重复设置起点');
+    this.currentSystem = initialSystem;
+    this.lastTime = startTime;
+    this.started = true;
+  }
+
+  /**
+   * 补上 [最后事件时刻, endTime] 这段无事件区间并返回汇总指标。
+   *
+   * 时间平均值 = 面积 / 统计时域长度。老的单段仿真从 t=0 起跑，分母就是
+   * endTime；时变分段仿真用全局绝对时钟，第 k 段起点 startTime 可能 > 0，
+   * 分母必须是 (endTime - startTime) 而非 endTime，否则从非零起点开始的
+   * 段会被系统性缩小。默认 startTime=0，老调用方行为逐位不变。
+   */
+  settle(endTime: number, startTime = 0): {
     meanNumberInSystem: number;
     meanNumberWaiting: number;
     utilization: number;
@@ -50,8 +73,9 @@ export class TimeWeightedAccumulator {
         utilization: 0,
       };
     }
-    this.observe(horizon, this.currentSystem);
-    if (horizon <= 0) {
+    this.observe(endTime, this.currentSystem);
+    const length = endTime - startTime;
+    if (length <= 0) {
       return {
         meanNumberInSystem: 0,
         meanNumberWaiting: 0,
@@ -59,9 +83,9 @@ export class TimeWeightedAccumulator {
       };
     }
     return {
-      meanNumberInSystem: this.areaSystem / horizon,
-      meanNumberWaiting: this.areaWaiting / horizon,
-      utilization: this.areaBusy / horizon,
+      meanNumberInSystem: this.areaSystem / length,
+      meanNumberWaiting: this.areaWaiting / length,
+      utilization: this.areaBusy / length,
     };
   }
 }

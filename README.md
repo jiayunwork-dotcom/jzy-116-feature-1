@@ -70,6 +70,75 @@
 
 `/api/compare` 的 `comparison` 字段逐项给出 `analytic`、`simulation`、`absoluteDifference`。
 
+## 时变负荷（负荷曲线）
+
+上面三个接口回答的是“到达率恒定、系统早已平衡”的**稳态**问题。新增的
+时变能力回答“按今天这条起起落落的流量曲线走一遍，每个时段实际拒掉多少、
+队有多长”：服务率 μ 与容量 K 全曲线固定，时间轴切成若干首尾相接的时段，
+每段有自己的时长与到达率；从系统为空开始，状态在段间连续延续，每段同时
+给出**瞬态解析**与**固定种子仿真**，并支持“改一段只重算该段之后”的
+增量核算（增量结果与从头完整重算**逐位一致**，服务重启后仍成立）。
+
+完整设计（数据模型、瞬态求解方法取舍、分段随机数流、增量判定、边界状态、
+持久化与容差）见 **[docs/time-varying.md](docs/time-varying.md)**。
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| `POST` | `/api/curves` | 登记曲线（含第 1 版） |
+| `GET` | `/api/curves` | 列出全部曲线 |
+| `GET` | `/api/curves/:curveId` | 取曲线（含全部版本摘要） |
+| `POST` | `/api/curves/:curveId/versions` | 新增版本（提交完整时段表，老版本保留） |
+| `GET` | `/api/curves/:curveId/versions/:v` | 取指定版本时段表 |
+| `POST` | `/api/curves/:curveId/versions/:v/computation` | 发起核算（幂等）；`{"forceFull":true}` 只读完整重算不落盘 |
+| `GET` | `/api/curves/:curveId/versions/:v/computation` | 查询核算结果（未核算返回 404） |
+
+登记曲线请求体：
+
+```json
+{
+  "name": "晚高峰",
+  "mu": 10,
+  "capacity": 20,
+  "seed": 20240901,
+  "segments": [
+    { "duration": 30, "lambda": 5 },
+    { "duration": 20, "lambda": 25 },
+    { "duration": 30, "lambda": 6 }
+  ]
+}
+```
+
+约束：时段数 1..64、单段时长 (0, 1000]、曲线总时长 ≤ 10000、容量 ≤ 1000、
+λ/μ ≤ 10000、λ 允许为 0；μ、K、seed 在整条曲线上固定，新增版本只能改
+时段表。非法输入返回 `400` 与 `{ error, fields }`（`fields` 精确到出错字段，
+如 `segments[2].lambda`）；引用不存在的曲线/版本返回 `404`。
+
+每段核算结果含 `analytic`（段内时间平均阻塞概率/平均队长/利用率与
+**段末人数分布**）、`simulation`（同口径经验值）、`comparison`（逐项绝对差）
+以及 `reused` 标记；顶层 `mode`（`full`/`incremental`）与
+`firstRecomputedIndex` 标明复用范围。
+
+### 持久化与数据目录
+
+曲线、版本、核算结果（含增量所需的段末跨界状态）以每条曲线一个 JSON 文件
+落在数据目录（原子写、double 逐位往返）。目录由环境变量 `TIMVAR_DATA_DIR`
+指定，缺省为进程工作目录下的 `./data`，懒创建。**老的三个接口不读写存储、
+不依赖数据目录。**
+
+本地开发：
+
+```bash
+TIMVAR_DATA_DIR=./data npm run dev
+```
+
+### 瞬态求解方法（一句话）
+
+瞬态解析用**均匀化（uniformization）**解生灭过程向前方程：转移矩阵与
+Poisson 权重严格非负，从分布众数展开权重避免 `e^{-αd}` 下溢，配子步与
+稳态提前退出；显式 ODE 积分（有负概率风险）与矩阵对角化（O(K³)、临界
+敏感）被放弃。上限内段末/时间平均分布绝对误差 ≲ 1e-9。详见
+docs/time-varying.md。
+
 ## 本地运行（Node.js 20）
 
 ```bash
@@ -86,8 +155,24 @@ npm run typecheck
 
 ```bash
 docker build -t mm1k-capacity-service .
+
+# 不挂卷：数据写在容器内 /data，容器删除即丢失（仅适合试用）
 docker run --rm -p 8080:8080 mm1k-capacity-service
+
+# 挂命名卷持久化时变负荷数据（推荐）：
+docker volume create mm1k-data
+docker run --rm -p 8080:8080 \
+  -v mm1k-data:/data \
+  mm1k-capacity-service
+
+# 或挂载宿主机目录（注意容器内以非 root 用户 node 运行，目录需可写）：
+docker run --rm -p 8080:8080 \
+  -v "$(pwd)/data:/data" \
+  mm1k-capacity-service
 ```
+
+镜像内把 `TIMVAR_DATA_DIR` 固定为 `/data` 并已交给 `node` 用户；
+也可用 `-e TIMVAR_DATA_DIR=/别的路径` 覆盖（需配合相应挂载与权限）。
 
 基于 `node:20-slim`，镜像内完成 TypeScript 编译并裁剪掉开发依赖，单容器启动后即对外应答。
 
@@ -104,8 +189,17 @@ src/
   metrics/metrics.ts          时间加权累加器与对照表汇总
   validation/validation.ts    输入校验（解析/仿真/路由共用）
   routes/queue-routes.ts      三个业务接口
+  timvar/                     时变负荷能力（独立模块，详见 docs/time-varying.md）
+    types.ts                  曲线/版本/核算/段边界类型
+    validation.ts             时变输入校验（上限、带 fields 的错误）
+    transient.ts              瞬态解析：均匀化求解
+    segment-simulation.ts     分段 DES：子流派生与跨界状态
+    storage.ts                JSON 持久化（原子写）
+    service.ts                版本链、增量判定与核算编排
+    routes.ts                 /api/curves/... 路由
   app.ts / server.ts          Express 装配与启动
-test/                         解析、仿真、HTTP 三层自动化测试
+test/                         解析、仿真、HTTP、时变（含真实进程重启）自动化测试
+docs/time-varying.md          时变负荷设计与容差说明
 ```
 
 ## 关键回归测试
