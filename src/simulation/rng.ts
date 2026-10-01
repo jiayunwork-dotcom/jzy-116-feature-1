@@ -14,6 +14,23 @@ export class Rng {
     this.state = seed >>> 0;
   }
 
+  /** 当前 32 位内部状态；时变负荷在段边界保存它，供后续段精确续跑 */
+  get internalState(): number {
+    return this.state;
+  }
+
+  /**
+   * 从保存的内部状态恢复 RNG（而不是从种子重新初始化）。
+   * 增量核算只重算被改动的段时，跨界 RNG 必须接着上一个复用段的状态跑，
+   * 逐位一致就靠恢复完全相同的 state，而不是重放随机数序列。
+   */
+  static fromState(state: number): Rng {
+    // 先构造（走一次种子初始化），再覆盖为存档状态；同类内可访问私有字段
+    const rng = new Rng(0);
+    rng.state = state >>> 0;
+    return rng;
+  }
+
   /** 返回 (0,1) 上的均匀随机数；理论上 mulberry32 不会返回精确的 0/1 */
   next(): number {
     this.state = (this.state + 0x6d2b79f5) >>> 0;

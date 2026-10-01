@@ -37,6 +37,29 @@ export class EventList {
     return top;
   }
 
+  /**
+   * 查看（不弹出）最早事件。时变负荷仿真在段边界据此判断：
+   * - 最早事件已越过段末：停止本段，该事件若是 departure 则带入下一段；
+   * - 否则正常弹出处理。
+   */
+  peek(): SimEvent | undefined {
+    return this.heap[0];
+  }
+
+  /** 段边界需要保序续跑时，导出事件表内容与其插入序号水位 */
+  snapshot(): { events: SimEvent[]; counter: number } {
+    // 堆数组拷贝即可：同一份堆结构恢复后，比较关系与弹出顺序完全一致
+    return { events: this.heap.map((e) => ({ ...e })), counter: this.counter };
+  }
+
+  /** 由段边界快照恢复事件表（含插入序号，保证同时刻平局裁决不变） */
+  static restore(snapshot: { events: SimEvent[]; counter: number }): EventList {
+    const list = new EventList();
+    list.heap = snapshot.events.map((e) => ({ ...e }));
+    list.counter = snapshot.counter;
+    return list;
+  }
+
   private static less(a: SimEvent, b: SimEvent): boolean {
     if (a.time !== b.time) return a.time < b.time;
     return a.seq < b.seq;

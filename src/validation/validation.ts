@@ -3,9 +3,23 @@ import type { QueueParams, SimulationInput } from '../types.js';
 /** 输入非法时抛出，路由层据此返回 400 */
 export class ValidationError extends Error {
   readonly statusCode = 400;
-  constructor(message: string) {
+  /** 出错字段名（时变负荷接口用于带字段说明的错误响应；老接口为 undefined） */
+  readonly field?: string;
+  constructor(message: string, field?: string) {
     super(message);
     this.name = 'ValidationError';
+    this.field = field;
+  }
+}
+
+/** 引用不存在的资源（曲线 / 版本 / 核算）时抛出，路由层据此返回 404 */
+export class NotFoundError extends Error {
+  readonly statusCode = 404;
+  readonly field?: string;
+  constructor(message: string, field?: string) {
+    super(message);
+    this.name = 'NotFoundError';
+    this.field = field;
   }
 }
 

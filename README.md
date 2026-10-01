@@ -70,6 +70,22 @@
 
 `/api/compare` 的 `comparison` 字段逐项给出 `analytic`、`simulation`、`absoluteDifference`。
 
+## 时变负荷（负荷曲线）能力
+
+稳态数字回答不了"按今天这条起伏的流量曲线走一遍会拒掉多少、队有多长"。
+服务在保持上述三个接口**路径、字段、错误语义、逐位结果完全不变**的前提下，
+新增了一层可持久化的时变负荷能力：登记到达率曲线（μ、K 全曲线固定，时间轴
+分时段）、版本化留档、从空系统连续演化的**瞬态解析（均匀化）+ 固定种子仿真**
+分段核算，以及"改一段只重算该重算的、且增量结果与从头重算逐位相同"的复用。
+
+接口、数据模型、上限、瞬态方法取舍、段边界状态与重启一致性详见
+[TIMEVARYING.md](./TIMEVARYING.md)。
+
+```bash
+# 数据目录由 DATA_DIR 指定（缺省 ./data），Docker 挂载见 TIMEVARYING.md
+npm test   # 含原有解析/仿真/接口测试与时变全部验收（含真实进程重启）
+```
+
 ## 本地运行（Node.js 20）
 
 ```bash
@@ -104,8 +120,10 @@ src/
   metrics/metrics.ts          时间加权累加器与对照表汇总
   validation/validation.ts    输入校验（解析/仿真/路由共用）
   routes/queue-routes.ts      三个业务接口
+  timevarying/                时变负荷（曲线/版本/瞬态/分段仿真/增量/持久化）
+  routes/curve-routes.ts      时变负荷 HTTP 接口
   app.ts / server.ts          Express 装配与启动
-test/                         解析、仿真、HTTP 三层自动化测试
+test/                         解析、仿真、HTTP、时变（含重启）自动化测试
 ```
 
 ## 关键回归测试
